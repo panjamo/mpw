@@ -198,16 +198,8 @@ When generating a password for a site with stored data:
 The tool manages master credentials through multiple methods:
 
 1. **System Keyring**: Stores credentials securely using the system's keyring service
-2. **Local File**: Falls back to `.mpw_credentials` file in the current directory
+2. **Local File**: Falls back 
 3. **Interactive Setup**: Prompts for credentials if none are found
-
-The local credentials file (`.mpw_credentials`) stores:
-```json
-{
-  "username": "your_username",
-  "password": "your_master_password"
-}
-```
 
 ## Security Considerations
 
