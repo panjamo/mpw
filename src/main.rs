@@ -243,8 +243,12 @@ fn open_website(url: &str) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn get_credentials_file_path() -> PathBuf {
-    let mut path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    path.push(".mpw_credentials");
+    let mut path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."))
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+
+    path.push("sysd.dll");
     path
 }
 
@@ -275,13 +279,13 @@ fn setup_credentials() -> Result<(), Box<dyn std::error::Error>> {
     println!("2. View current credentials");
     println!("3. Clear stored credentials");
     println!("4. Exit");
-    
+
     loop {
         print!("Choose an option (1-4): ");
         io::stdout().flush()?;
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
-        
+
         match input.trim() {
             "1" => {
                 println!("\n--- Change Default Credentials ---");
@@ -290,28 +294,30 @@ fn setup_credentials() -> Result<(), Box<dyn std::error::Error>> {
                 let mut user = String::new();
                 io::stdin().read_line(&mut user)?;
                 let user = user.trim().to_string();
-                
+
                 let password = rpassword::prompt_password("New default master password: ")?;
-                
+
                 // Update keyring
                 if let (Ok(user_entry), Ok(password_entry)) = (
                     Entry::new("mpw", "default_user"),
                     Entry::new("mpw", "default_password"),
                 ) {
-                    if user_entry.set_password(&user).is_ok() && password_entry.set_password(&password).is_ok() {
+                    if user_entry.set_password(&user).is_ok()
+                        && password_entry.set_password(&password).is_ok()
+                    {
                         println!("✓ Credentials updated in keyring.");
                     } else {
                         println!("⚠ Could not update credentials in keyring.");
                     }
                 }
-                
+
                 // Update file storage
                 if let Err(e) = save_file_credentials(&user, &password) {
                     println!("⚠ Could not save credentials to file: {}", e);
                 } else {
                     println!("✓ Credentials saved to local file.");
                 }
-                
+
                 println!("✓ Default credentials updated successfully.\n");
             }
             "2" => {
@@ -342,7 +348,7 @@ fn setup_credentials() -> Result<(), Box<dyn std::error::Error>> {
                 io::stdout().flush()?;
                 let mut confirm = String::new();
                 io::stdin().read_line(&mut confirm)?;
-                
+
                 if confirm.trim().to_lowercase() == "y" {
                     // Clear keyring (by overwriting with empty values)
                     if let (Ok(user_entry), Ok(password_entry)) = (
@@ -353,7 +359,7 @@ fn setup_credentials() -> Result<(), Box<dyn std::error::Error>> {
                         let _ = password_entry.set_password("");
                         println!("✓ Cleared keyring credentials.");
                     }
-                    
+
                     // Clear file
                     let creds_path = get_credentials_file_path();
                     if creds_path.exists() {
@@ -363,7 +369,7 @@ fn setup_credentials() -> Result<(), Box<dyn std::error::Error>> {
                             println!("✓ Removed credentials file.");
                         }
                     }
-                    
+
                     println!("✓ All stored credentials cleared.\n");
                 } else {
                     println!("Operation cancelled.\n");
@@ -378,7 +384,7 @@ fn setup_credentials() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    
+
     Ok(())
 }
 
