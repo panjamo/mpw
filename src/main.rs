@@ -83,14 +83,19 @@ struct Args {
     setup: bool,
 }
 
-fn load_site_data(site_name: &str) -> Result<Option<SiteEntry>, Box<dyn std::error::Error>> {
+fn get_main_json_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
     let folder = std::env::current_exe()?
         .parent()
         .ok_or("Could not get binary folder")?
         .to_path_buf();
+    Ok(folder.join("main.json"))
+}
 
-    if Path::new(&folder.join("main.json")).exists() {
-        let content = fs::read_to_string(folder.join("main.json"))?;
+fn load_site_data(site_name: &str) -> Result<Option<SiteEntry>, Box<dyn std::error::Error>> {
+    let main_json_path = get_main_json_path()?;
+
+    if main_json_path.exists() {
+        let content = fs::read_to_string(main_json_path)?;
         let entries: Vec<SiteEntry> = serde_json::from_str(&content)?;
 
         for entry in entries {
@@ -103,11 +108,13 @@ fn load_site_data(site_name: &str) -> Result<Option<SiteEntry>, Box<dyn std::err
 }
 
 fn search_entries_by_regex(pattern: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    if !Path::new("main.json").exists() {
+    let main_json_path = get_main_json_path()?;
+
+    if !main_json_path.exists() {
         return Err("main.json file not found".into());
     }
 
-    let content = fs::read_to_string("main.json")?;
+    let content = fs::read_to_string(main_json_path)?;
     let entries: Vec<SiteEntry> = serde_json::from_str(&content)?;
     let regex = Regex::new(pattern)?;
 
@@ -243,7 +250,8 @@ fn open_website(url: &str) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn get_credentials_file_path() -> PathBuf {
-    let mut path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."))
+    let mut path = std::env::current_exe()
+        .unwrap_or_else(|_| PathBuf::from("."))
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
@@ -580,12 +588,20 @@ fn main() {
                 println!("✓ Password copied to clipboard");
             }
         } else {
-            // Fallback: just print password if no userName field
-            println!("{}", password_str);
+            // Copy password to clipboard
+            if let Err(e) = copy_to_clipboard(&password_str) {
+                eprintln!("Warning: Could not copy password to clipboard: {}", e);
+            } else {
+                println!("✓ Password copied to clipboard");
+            }
         }
     } else {
-        // Fallback: just print password if no site data
-        println!("{}", password_str);
+        // Copy password to clipboard
+        if let Err(e) = copy_to_clipboard(&password_str) {
+            eprintln!("Warning: Could not copy password to clipboard: {}", e);
+        } else {
+            println!("✓ Password copied to clipboard");
+        }
     }
 
     let identicon = create_identicon(&master_pass, &user);
