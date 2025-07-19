@@ -9,7 +9,7 @@ A command-line password manager that generates secure, deterministic passwords b
 - **Site Data Integration**: Loads site configuration from `main.json` file
 - **Clipboard Integration**: Automatically copies usernames and passwords to clipboard
 - **Website Auto-opening**: Opens websites in your default browser
-- **Credential Management**: Stores master credentials securely using system keyring or local file
+- **Secure Credential Storage**: Dual storage system with Windows Credential Manager and machine-encrypted local files
 - **Regex Search**: Search through site entries using regular expressions
 - **Interactive Setup**: Comprehensive credential management interface
 
@@ -112,7 +112,7 @@ Choose an option (1-4): 1
 New default username: user@example.com
 New default master password: [hidden input]
 ✓ Credentials updated in keyring.
-✓ Credentials saved to local file.
+✓ Encrypted credentials saved to local file.
 ✓ Default credentials updated successfully.
 
 Choose an option (1-4): 2
@@ -120,7 +120,8 @@ Choose an option (1-4): 2
 --- Current Credentials ---
 Username: user@example.com
 Password: [hidden]
-Source: Local file
+Source: Windows Credential Manager
+Backup: Encrypted local file also available
 
 Choose an option (1-4): 4
 Goodbye!
@@ -195,24 +196,50 @@ When generating a password for a site with stored data:
 
 ### Credential Storage
 
-The tool manages master credentials through multiple methods:
+The tool uses a dual storage system for maximum reliability and security:
 
-1. **System Keyring**: Stores credentials securely using the system's keyring service
-2. **Local File**: Falls back 
-3. **Interactive Setup**: Prompts for credentials if none are found
+1. **Primary: Windows Credential Manager** (or system keyring on other platforms)
+   - Credentials stored securely in the system's native credential store
+   - Accessed through the Windows Credential Manager interface
+   - Fully integrated with Windows security infrastructure
+
+2. **Fallback: Machine-Encrypted Local File** (`.mpw_credentials`)
+   - Located in the same directory as the executable
+   - Encrypted using AES-256-GCM with machine-specific key
+   - Encryption key derived from Windows Machine GUID (or Linux machine-id/hostname)
+   - Cannot be decrypted on different machines
+   - Provides backup when system keyring is unavailable
+
+3. **Storage Priority**:
+   - Checks Windows Credential Manager first
+   - Falls back to encrypted local file if keyring unavailable
+   - Prompts for new credentials if neither exists
+   - Always maintains both storage methods when possible
+
+4. **Security Features**:
+   - Machine-specific encryption prevents credential theft
+   - AES-256-GCM provides authenticated encryption
+   - Unique nonces prevent replay attacks
+   - No plaintext credentials stored on disk
 
 ## Security Considerations
 
-- Master passwords are handled using secure strings (`SecStr`)
-- Credentials are stored in system keyring when available
-- Local credential files should be protected with appropriate file permissions
-- The tool strips debug information and optimizes for minimal binary size
+- **Master Password Handling**: Uses secure strings (`SecStr`) to protect in-memory credentials
+- **Dual Storage System**: Primary storage in Windows Credential Manager with encrypted local backup
+- **Machine-Specific Encryption**: Local files encrypted with machine GUID, preventing cross-machine access
+- **Authenticated Encryption**: AES-256-GCM prevents tampering and ensures data integrity
+- **No Plaintext Storage**: Credentials never stored in plaintext on disk
+- **Binary Optimization**: Debug information stripped and optimized for minimal attack surface
 
 ## Dependencies
 
 - **rusterpassword**: Master Password algorithm implementation
 - **clap**: Command-line argument parsing
-- **keyring**: Secure credential storage
+- **keyring**: System keyring/credential manager integration
+- **aes-gcm**: AES-256-GCM encryption for local credential storage
+- **winreg**: Windows registry access for Machine GUID (Windows only)
+- **sha2**: SHA-256 hashing for key derivation
+- **base64**: Base64 encoding for encrypted data storage
 - **arboard**: Clipboard operations
 - **webbrowser**: Website opening functionality
 - **regex**: Pattern matching for search

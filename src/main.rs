@@ -1,13 +1,24 @@
+use aes_gcm::{
+    Aes256Gcm, Nonce,
+    aead::{Aead, AeadCore, KeyInit, OsRng},
+};
 use arboard::Clipboard;
+use base64::{Engine as _, engine::general_purpose};
 use clap::{ArgAction, Parser};
 use keyring::Entry;
 use regex::Regex;
 use rusterpassword::*;
 use secstr::SecStr;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+
+#[cfg(windows)]
+use winreg::RegKey;
+#[cfg(windows)]
+use winreg::enums::*;
 
 #[derive(Debug, Deserialize, Serialize)]
 struct SiteEntry {
@@ -43,6 +54,88 @@ struct SiteEntry {
 struct Credentials {
     username: String,
     password: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct EncryptedCredentials {
+    data: String,
+    nonce: String,
+}
+
+#[cfg(windows)]
+fn get_machine_guid() -> Result<String, Box<dyn std::error::Error>> {
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let crypto_key = hklm.open_subkey("SOFTWARE\\Microsoft\\Cryptography")?;
+    let machine_guid: String = crypto_key.get_value("MachineGuid")?;
+    Ok(machine_guid)
+}
+
+#[cfg(not(windows))]
+fn get_machine_guid() -> Result<String, Box<dyn std::error::Error>> {
+    // Fallback for non-Windows: use hostname + /etc/machine-id if available
+    use std::process::Command;
+
+    // Try /etc/machine-id first (systemd)
+    if let Ok(machine_id) = std::fs::read_to_string("/etc/machine-id") {
+        return Ok(machine_id.trim().to_string());
+    }
+
+    // Fallback to hostname
+    let output = Command::new("hostname").output()?;
+    let hostname = String::from_utf8(output.stdout)?;
+    Ok(hostname.trim().to_string())
+}
+
+fn derive_key_from_machine_guid() -> Result<[u8; 32], Box<dyn std::error::Error>> {
+    let machine_guid = get_machine_guid()?;
+    let mut hasher = Sha256::new();
+    hasher.update(machine_guid.as_bytes());
+    let result = hasher.finalize();
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&result);
+    Ok(key)
+}
+
+fn encrypt_credentials(
+    username: &str,
+    password: &str,
+) -> Result<EncryptedCredentials, Box<dyn std::error::Error>> {
+    let key = derive_key_from_machine_guid()?;
+    let cipher = Aes256Gcm::new_from_slice(&key)?;
+    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+
+    let credentials = Credentials {
+        username: username.to_string(),
+        password: password.to_string(),
+    };
+    let plaintext = serde_json::to_string(&credentials)?;
+
+    let ciphertext = cipher
+        .encrypt(&nonce, plaintext.as_bytes())
+        .map_err(|e| format!("Encryption failed: {:?}", e))?;
+
+    Ok(EncryptedCredentials {
+        data: general_purpose::STANDARD.encode(ciphertext),
+        nonce: general_purpose::STANDARD.encode(nonce),
+    })
+}
+
+fn decrypt_credentials(
+    encrypted: &EncryptedCredentials,
+) -> Result<(String, String), Box<dyn std::error::Error>> {
+    let key = derive_key_from_machine_guid()?;
+    let cipher = Aes256Gcm::new_from_slice(&key)?;
+
+    let ciphertext = general_purpose::STANDARD.decode(&encrypted.data)?;
+    let nonce_bytes = general_purpose::STANDARD.decode(&encrypted.nonce)?;
+    let nonce = Nonce::from_slice(&nonce_bytes);
+
+    let plaintext = cipher
+        .decrypt(nonce, ciphertext.as_ref())
+        .map_err(|e| format!("Decryption failed: {:?}", e))?;
+    let credentials: Credentials = serde_json::from_slice(&plaintext)?;
+
+    Ok((credentials.username, credentials.password))
 }
 
 #[derive(Parser)]
@@ -89,6 +182,37 @@ fn get_main_json_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
         .ok_or("Could not get binary folder")?
         .to_path_buf();
     Ok(folder.join("main.json"))
+}
+
+fn get_credentials_file_path() -> PathBuf {
+    let mut path = std::env::current_exe()
+        .unwrap_or_else(|_| PathBuf::from("mpw.exe"))
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    path.push(".mpw_credentials");
+    path
+}
+
+fn save_encrypted_credentials(
+    username: &str,
+    password: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let encrypted = encrypt_credentials(username, password)?;
+    let content = serde_json::to_string(&encrypted)?;
+    fs::write(get_credentials_file_path(), content)?;
+    Ok(())
+}
+
+fn load_encrypted_credentials() -> Result<(String, String), Box<dyn std::error::Error>> {
+    let creds_path = get_credentials_file_path();
+    if !creds_path.exists() {
+        return Err("No encrypted credentials file found".into());
+    }
+
+    let content = fs::read_to_string(creds_path)?;
+    let encrypted: EncryptedCredentials = serde_json::from_str(&content)?;
+    decrypt_credentials(&encrypted)
 }
 
 fn load_site_data(site_name: &str) -> Result<Option<SiteEntry>, Box<dyn std::error::Error>> {
@@ -249,38 +373,6 @@ fn open_website(url: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn get_credentials_file_path() -> PathBuf {
-    let mut path = std::env::current_exe()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .to_path_buf();
-
-    path.push("sysd.dll");
-    path
-}
-
-fn load_file_credentials() -> Result<(String, String), Box<dyn std::error::Error>> {
-    let creds_path = get_credentials_file_path();
-    if creds_path.exists() {
-        let content = fs::read_to_string(creds_path)?;
-        let creds: Credentials = serde_json::from_str(&content)?;
-        Ok((creds.username, creds.password))
-    } else {
-        Err("No credentials file found".into())
-    }
-}
-
-fn save_file_credentials(username: &str, password: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let creds = Credentials {
-        username: username.to_string(),
-        password: password.to_string(),
-    };
-    let content = serde_json::to_string(&creds)?;
-    fs::write(get_credentials_file_path(), content)?;
-    Ok(())
-}
-
 fn setup_credentials() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== MPW Credential Management ===");
     println!("1. Change default credentials");
@@ -319,33 +411,47 @@ fn setup_credentials() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
-                // Update file storage
-                if let Err(e) = save_file_credentials(&user, &password) {
-                    println!("⚠ Could not save credentials to file: {}", e);
+                // Update encrypted file storage
+                if let Err(e) = save_encrypted_credentials(&user, &password) {
+                    println!("⚠ Could not save encrypted credentials to file: {}", e);
                 } else {
-                    println!("✓ Credentials saved to local file.");
+                    println!("✓ Encrypted credentials saved to local file.");
                 }
 
                 println!("✓ Default credentials updated successfully.\n");
             }
             "2" => {
                 println!("\n--- Current Credentials ---");
-                if let Ok((user, _)) = load_file_credentials() {
-                    println!("Username: {}", user);
-                    println!("Password: [hidden]");
-                    println!("Source: Local file");
-                } else if let (Ok(user_entry), Ok(_)) = (
+                let mut found_credentials = false;
+
+                // Check Windows Credential Manager first
+                if let (Ok(user_entry), Ok(_)) = (
                     Entry::new("mpw", "default_user"),
                     Entry::new("mpw", "default_password"),
                 ) {
                     if let Ok(user) = user_entry.get_password() {
+                        if !user.is_empty() {
+                            println!("Username: {}", user);
+                            println!("Password: [hidden]");
+                            println!("Source: Windows Credential Manager");
+                            found_credentials = true;
+                        }
+                    }
+                }
+
+                // Check encrypted file
+                if let Ok((user, _)) = load_encrypted_credentials() {
+                    if !found_credentials {
                         println!("Username: {}", user);
                         println!("Password: [hidden]");
-                        println!("Source: System keyring");
+                        println!("Source: Encrypted local file");
                     } else {
-                        println!("No credentials found.");
+                        println!("Backup: Encrypted local file also available");
                     }
-                } else {
+                    found_credentials = true;
+                }
+
+                if !found_credentials {
                     println!("No credentials found.");
                 }
                 println!();
@@ -368,13 +474,13 @@ fn setup_credentials() -> Result<(), Box<dyn std::error::Error>> {
                         println!("✓ Cleared keyring credentials.");
                     }
 
-                    // Clear file
+                    // Clear encrypted file
                     let creds_path = get_credentials_file_path();
                     if creds_path.exists() {
                         if let Err(e) = fs::remove_file(&creds_path) {
-                            println!("⚠ Could not remove credentials file: {}", e);
+                            println!("⚠ Could not remove encrypted credentials file: {}", e);
                         } else {
-                            println!("✓ Removed credentials file.");
+                            println!("✓ Removed encrypted credentials file.");
                         }
                     }
 
@@ -397,21 +503,25 @@ fn setup_credentials() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn get_or_store_credentials() -> Result<(String, String), Box<dyn std::error::Error>> {
-    if let Ok((user, password)) = load_file_credentials() {
-        return Ok((user, password));
-    }
-
+    // Try Windows Credential Manager first
     if let (Ok(user_entry), Ok(password_entry)) = (
         Entry::new("mpw", "default_user"),
         Entry::new("mpw", "default_password"),
     ) {
         if let (Ok(user), Ok(password)) = (user_entry.get_password(), password_entry.get_password())
         {
-            save_file_credentials(&user, &password).ok();
-            return Ok((user, password));
+            if !user.is_empty() && !password.is_empty() {
+                return Ok((user, password));
+            }
         }
     }
 
+    // Try encrypted local file as fallback
+    if let Ok((user, password)) = load_encrypted_credentials() {
+        return Ok((user, password));
+    }
+
+    // No stored credentials found, prompt user
     println!("No stored credentials found. Please set up default credentials:");
     print!("Default username: ");
     io::stdout().flush()?;
@@ -421,22 +531,34 @@ fn get_or_store_credentials() -> Result<(String, String), Box<dyn std::error::Er
 
     let password = rpassword::prompt_password("Default master password: ")?;
 
+    // Try to store in Windows Credential Manager first
+    let mut keyring_success = false;
     if let (Ok(user_entry), Ok(password_entry)) = (
         Entry::new("mpw", "default_user"),
         Entry::new("mpw", "default_password"),
     ) {
         if user_entry.set_password(&user).is_ok() && password_entry.set_password(&password).is_ok()
         {
-            println!("Credentials stored securely in keyring.");
-        } else {
-            println!("Warning: Could not store credentials in keyring, using file storage.");
+            println!("Credentials stored securely in Windows Credential Manager.");
+            keyring_success = true;
         }
     }
 
-    if let Err(e) = save_file_credentials(&user, &password) {
-        println!("Warning: Could not save credentials to file: {}", e);
+    // Store encrypted backup file regardless
+    if let Err(e) = save_encrypted_credentials(&user, &password) {
+        if !keyring_success {
+            return Err(format!("Could not store credentials anywhere: {}", e).into());
+        } else {
+            println!("Warning: Could not save encrypted backup file: {}", e);
+        }
     } else {
-        println!("Credentials saved to local file.");
+        println!("Encrypted backup file saved.");
+    }
+
+    if !keyring_success {
+        println!(
+            "Warning: Could not store in Windows Credential Manager, using encrypted file only."
+        );
     }
 
     Ok((user, password))
@@ -450,7 +572,10 @@ fn handle_setup_mode() -> Result<(), Box<dyn std::error::Error>> {
 fn handle_regex_search(regex_pattern: &str) -> Result<(), Box<dyn std::error::Error>> {
     let matching_sites = search_entries_by_regex(regex_pattern)?;
     if matching_sites.is_empty() {
-        println!("No entries found matching the regex pattern: {}", regex_pattern);
+        println!(
+            "No entries found matching the regex pattern: {}",
+            regex_pattern
+        );
     } else {
         println!("Found {} matching entries:", matching_sites.len());
         for site in matching_sites {
@@ -460,7 +585,10 @@ fn handle_regex_search(regex_pattern: &str) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-fn resolve_credentials(args_user: Option<String>, args_password: Option<String>) -> Result<(String, String), Box<dyn std::error::Error>> {
+fn resolve_credentials(
+    args_user: Option<String>,
+    args_password: Option<String>,
+) -> Result<(String, String), Box<dyn std::error::Error>> {
     match (args_user, args_password) {
         (Some(u), Some(p)) => Ok((u, p)),
         (user_arg, password_arg) => {
@@ -482,7 +610,10 @@ fn resolve_template_name(args_template: Option<String>, site_data: &Option<SiteE
     })
 }
 
-fn resolve_template(args_template: Option<String>, site_data: &Option<SiteEntry>) -> &'static [&'static str] {
+fn resolve_template(
+    args_template: Option<String>,
+    site_data: &Option<SiteEntry>,
+) -> &'static [&'static str] {
     let template_str = resolve_template_name(args_template, site_data);
 
     if let Some(data) = site_data {
@@ -502,14 +633,23 @@ fn resolve_template(args_template: Option<String>, site_data: &Option<SiteEntry>
             "GeneratedMedium" => TEMPLATES_MEDIUM,
             "GeneratedMaximum" => TEMPLATES_MAXIMUM,
             _ => {
-                eprintln!("Unknown template: {}. Using 'long' as default.", template_str);
+                eprintln!(
+                    "Unknown template: {}. Using 'long' as default.",
+                    template_str
+                );
                 TEMPLATES_LONG
             }
         }
     }
 }
 
-fn generate_password(user: &str, password: &str, site_name: &str, counter: u32, templates: &'static [&'static str]) -> Result<String, Box<dyn std::error::Error>> {
+fn generate_password(
+    user: &str,
+    password: &str,
+    site_name: &str,
+    counter: u32,
+    templates: &'static [&'static str],
+) -> Result<String, Box<dyn std::error::Error>> {
     let master_pass = SecStr::from(password);
     let master_key = gen_master_key(master_pass.clone(), user)?;
     let site_seed = gen_site_seed(&master_key, site_name, counter)?;
@@ -517,26 +657,33 @@ fn generate_password(user: &str, password: &str, site_name: &str, counter: u32, 
     Ok(String::from_utf8_lossy(password.unsecure()).to_string())
 }
 
-fn handle_user_workflow(site_data: &Option<SiteEntry>, password_str: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn handle_user_workflow(
+    site_data: &Option<SiteEntry>,
+    password_str: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(data) = site_data {
         if let Some(user_name) = &data.user_name {
             let (username, website, _comment) = parse_user_name(user_name);
 
-            copy_to_clipboard(&username).map_err(|e| {
-                eprintln!("Warning: Could not copy username to clipboard: {}", e);
-                e
-            }).unwrap_or_else(|_| {
-                println!("✓ Username copied to clipboard: {}", username);
-            });
+            copy_to_clipboard(&username)
+                .map_err(|e| {
+                    eprintln!("Warning: Could not copy username to clipboard: {}", e);
+                    e
+                })
+                .unwrap_or_else(|_| {
+                    println!("✓ Username copied to clipboard: {}", username);
+                });
 
             if let Some(url) = &website {
                 if url.starts_with("http") {
-                    open_website(url).map_err(|e| {
-                        eprintln!("Warning: Could not open website: {}", e);
-                        e
-                    }).unwrap_or_else(|_| {
-                        println!("✓ Opened website: {}", url);
-                    });
+                    open_website(url)
+                        .map_err(|e| {
+                            eprintln!("Warning: Could not open website: {}", e);
+                            e
+                        })
+                        .unwrap_or_else(|_| {
+                            println!("✓ Opened website: {}", url);
+                        });
                 }
             }
 
@@ -544,12 +691,14 @@ fn handle_user_workflow(site_data: &Option<SiteEntry>, password_str: &str) -> Re
         }
     }
 
-    copy_to_clipboard(password_str).map_err(|e| {
-        eprintln!("Warning: Could not copy password to clipboard: {}", e);
-        e
-    }).unwrap_or_else(|_| {
-        println!("✓ Password copied to clipboard");
-    });
+    copy_to_clipboard(password_str)
+        .map_err(|e| {
+            eprintln!("Warning: Could not copy password to clipboard: {}", e);
+            e
+        })
+        .unwrap_or_else(|_| {
+            println!("✓ Password copied to clipboard");
+        });
 
     Ok(())
 }
@@ -590,7 +739,9 @@ fn main() {
     let site_name = match args.site {
         Some(site) => site,
         None => {
-            eprintln!("Error: Site name is required for password generation. Use --site or --regex option.");
+            eprintln!(
+                "Error: Site name is required for password generation. Use --site or --regex option."
+            );
             std::process::exit(1);
         }
     };
@@ -608,17 +759,18 @@ fn main() {
         None
     });
 
-    let counter = args.counter
+    let counter = args
+        .counter
         .unwrap_or_else(|| site_data.as_ref().map(|d| d.site_counter).unwrap_or(1));
-    
+
     let template_name = resolve_template_name(args.template.clone(), &site_data);
     let templates = resolve_template(args.template, &site_data);
-    
+
     // Print site information
     println!("Site: {}", site_name);
     println!("Counter: {}", counter);
     println!("Template: {}", template_name);
-    
+
     // Print website and comment if available from site data
     if let Some(ref data) = site_data {
         if let Some(ref user_name) = data.user_name {
@@ -637,7 +789,7 @@ fn main() {
             }
         }
     }
-    
+
     let password_str = match generate_password(&user, &password, &site_name, counter, templates) {
         Ok(pwd) => pwd,
         Err(e) => {
