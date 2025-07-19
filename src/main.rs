@@ -442,88 +442,50 @@ fn get_or_store_credentials() -> Result<(String, String), Box<dyn std::error::Er
     Ok((user, password))
 }
 
-fn main() {
-    let args = Args::parse();
+fn handle_setup_mode() -> Result<(), Box<dyn std::error::Error>> {
+    setup_credentials()?;
+    Ok(())
+}
 
-    // Handle setup mode
-    if args.setup {
-        match setup_credentials() {
-            Ok(()) => {
-                std::process::exit(0);
-            }
-            Err(e) => {
-                eprintln!("Error in setup mode: {}", e);
-                std::process::exit(1);
-            }
+fn handle_regex_search(regex_pattern: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let matching_sites = search_entries_by_regex(regex_pattern)?;
+    if matching_sites.is_empty() {
+        println!("No entries found matching the regex pattern: {}", regex_pattern);
+    } else {
+        println!("Found {} matching entries:", matching_sites.len());
+        for site in matching_sites {
+            println!("  {}", site);
         }
     }
+    Ok(())
+}
 
-    // Handle regex search mode
-    if let Some(regex_pattern) = args.regex {
-        match search_entries_by_regex(&regex_pattern) {
-            Ok(matching_sites) => {
-                if matching_sites.is_empty() {
-                    println!(
-                        "No entries found matching the regex pattern: {}",
-                        regex_pattern
-                    );
-                } else {
-                    println!("Found {} matching entries:", matching_sites.len());
-                    for site in matching_sites {
-                        println!("  {}", site);
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!("Error searching entries: {}", e);
-                std::process::exit(1);
-            }
-        }
-        return;
-    }
-
-    // Regular password generation mode - site name is required
-    let site_name = match args.site {
-        Some(site) => site,
-        None => {
-            eprintln!(
-                "Error: Site name is required for password generation. Use --site or --regex option."
-            );
-            std::process::exit(1);
-        }
-    };
-
-    let (user, password) = match (args.user, args.password) {
-        (Some(u), Some(p)) => (u, p),
-        (user_arg, password_arg) => match get_or_store_credentials() {
-            Ok((default_user, default_password)) => (
+fn resolve_credentials(args_user: Option<String>, args_password: Option<String>) -> Result<(String, String), Box<dyn std::error::Error>> {
+    match (args_user, args_password) {
+        (Some(u), Some(p)) => Ok((u, p)),
+        (user_arg, password_arg) => {
+            let (default_user, default_password) = get_or_store_credentials()?;
+            Ok((
                 user_arg.unwrap_or(default_user),
                 password_arg.unwrap_or(default_password),
-            ),
-            Err(e) => {
-                eprintln!("Error getting credentials: {}", e);
-                std::process::exit(1);
-            }
-        },
-    };
+            ))
+        }
+    }
+}
 
-    let site_data = load_site_data(&site_name).unwrap_or_else(|e| {
-        eprintln!("Warning: Could not load site data: {}", e);
-        None
-    });
-
-    let counter = args
-        .counter
-        .unwrap_or_else(|| site_data.as_ref().map(|d| d.site_counter).unwrap_or(1));
-
-    let template_str = args.template.unwrap_or_else(|| {
+fn resolve_template_name(args_template: Option<String>, site_data: &Option<SiteEntry>) -> String {
+    args_template.unwrap_or_else(|| {
         site_data
             .as_ref()
             .map(|d| d.password_type.clone())
             .unwrap_or_else(|| "GeneratedLong".to_string())
-    });
+    })
+}
 
-    let templates = if let Some(ref data) = site_data {
+fn resolve_template(args_template: Option<String>, site_data: &Option<SiteEntry>) -> &'static [&'static str] {
+    let template_str = resolve_template_name(args_template, site_data);
+
+    if let Some(data) = site_data {
         password_type_to_template(&data.password_type)
     } else {
         match template_str.as_str() {
@@ -540,71 +502,60 @@ fn main() {
             "GeneratedMedium" => TEMPLATES_MEDIUM,
             "GeneratedMaximum" => TEMPLATES_MAXIMUM,
             _ => {
-                eprintln!(
-                    "Unknown template: {}. Using 'long' as default.",
-                    template_str
-                );
+                eprintln!("Unknown template: {}. Using 'long' as default.", template_str);
                 TEMPLATES_LONG
             }
         }
-    };
+    }
+}
 
+fn generate_password(user: &str, password: &str, site_name: &str, counter: u32, templates: &'static [&'static str]) -> Result<String, Box<dyn std::error::Error>> {
     let master_pass = SecStr::from(password);
-    let master_key = gen_master_key(master_pass.clone(), &user).unwrap();
-    let site_seed = gen_site_seed(&master_key, &site_name, counter).unwrap();
+    let master_key = gen_master_key(master_pass.clone(), user)?;
+    let site_seed = gen_site_seed(&master_key, site_name, counter)?;
     let password = gen_site_password(&site_seed, templates);
-    let password_str = String::from_utf8_lossy(password.unsecure());
+    Ok(String::from_utf8_lossy(password.unsecure()).to_string())
+}
 
-    // Enhanced workflow: handle username parsing, clipboard, and browser
-    if let Some(ref data) = site_data {
-        if let Some(ref user_name) = data.user_name {
+fn handle_user_workflow(site_data: &Option<SiteEntry>, password_str: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(data) = site_data {
+        if let Some(user_name) = &data.user_name {
             let (username, website, _comment) = parse_user_name(user_name);
 
-            // Copy username to clipboard
-            if let Err(e) = copy_to_clipboard(&username) {
+            copy_to_clipboard(&username).map_err(|e| {
                 eprintln!("Warning: Could not copy username to clipboard: {}", e);
-            } else {
+                e
+            }).unwrap_or_else(|_| {
                 println!("✓ Username copied to clipboard: {}", username);
-            }
+            });
 
-            // Open website if it's a URL
-            if let Some(ref url) = website {
+            if let Some(url) = &website {
                 if url.starts_with("http") {
-                    if let Err(e) = open_website(url) {
+                    open_website(url).map_err(|e| {
                         eprintln!("Warning: Could not open website: {}", e);
-                    } else {
+                        e
+                    }).unwrap_or_else(|_| {
                         println!("✓ Opened website: {}", url);
-                    }
+                    });
                 }
             }
 
-            // Add a small delay to give time for clipboard operations
             std::thread::sleep(std::time::Duration::from_secs(1));
-
-            // Copy password to clipboard
-            if let Err(e) = copy_to_clipboard(&password_str) {
-                eprintln!("Warning: Could not copy password to clipboard: {}", e);
-            } else {
-                println!("✓ Password copied to clipboard");
-            }
-        } else {
-            // Copy password to clipboard
-            if let Err(e) = copy_to_clipboard(&password_str) {
-                eprintln!("Warning: Could not copy password to clipboard: {}", e);
-            } else {
-                println!("✓ Password copied to clipboard");
-            }
-        }
-    } else {
-        // Copy password to clipboard
-        if let Err(e) = copy_to_clipboard(&password_str) {
-            eprintln!("Warning: Could not copy password to clipboard: {}", e);
-        } else {
-            println!("✓ Password copied to clipboard");
         }
     }
 
-    let identicon = create_identicon(&master_pass, &user);
+    copy_to_clipboard(password_str).map_err(|e| {
+        eprintln!("Warning: Could not copy password to clipboard: {}", e);
+        e
+    }).unwrap_or_else(|_| {
+        println!("✓ Password copied to clipboard");
+    });
+
+    Ok(())
+}
+
+fn display_identicon(master_pass: &SecStr, user: &str) {
+    let identicon = create_identicon(master_pass, user);
     print!("Identicon: ");
     for value in [
         &identicon.left_arm,
@@ -615,4 +566,90 @@ fn main() {
         print!("{}", value);
     }
     println!(", Color: {}", identicon.color);
+}
+
+fn main() {
+    let args = Args::parse();
+
+    if args.setup {
+        if let Err(e) = handle_setup_mode() {
+            eprintln!("Error in setup mode: {}", e);
+            std::process::exit(1);
+        }
+        std::process::exit(0);
+    }
+
+    if let Some(regex_pattern) = args.regex {
+        if let Err(e) = handle_regex_search(&regex_pattern) {
+            eprintln!("Error searching entries: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    let site_name = match args.site {
+        Some(site) => site,
+        None => {
+            eprintln!("Error: Site name is required for password generation. Use --site or --regex option.");
+            std::process::exit(1);
+        }
+    };
+
+    let (user, password) = match resolve_credentials(args.user, args.password) {
+        Ok(creds) => creds,
+        Err(e) => {
+            eprintln!("Error getting credentials: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let site_data = load_site_data(&site_name).unwrap_or_else(|e| {
+        eprintln!("Warning: Could not load site data: {}", e);
+        None
+    });
+
+    let counter = args.counter
+        .unwrap_or_else(|| site_data.as_ref().map(|d| d.site_counter).unwrap_or(1));
+    
+    let template_name = resolve_template_name(args.template.clone(), &site_data);
+    let templates = resolve_template(args.template, &site_data);
+    
+    // Print site information
+    println!("Site: {}", site_name);
+    println!("Counter: {}", counter);
+    println!("Template: {}", template_name);
+    
+    // Print website and comment if available from site data
+    if let Some(ref data) = site_data {
+        if let Some(ref user_name) = data.user_name {
+            let (username, website, comment) = parse_user_name(user_name);
+            println!("Username: {}", username);
+            if let Some(ref url) = website {
+                println!("Website: {}", url);
+            }
+            if let Some(ref note) = comment {
+                println!("Comment: {}", note);
+            }
+        }
+        if let Some(ref notes) = data.notes {
+            if !notes.trim().is_empty() {
+                println!("Notes: {}", notes);
+            }
+        }
+    }
+    
+    let password_str = match generate_password(&user, &password, &site_name, counter, templates) {
+        Ok(pwd) => pwd,
+        Err(e) => {
+            eprintln!("Error generating password: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    if let Err(e) = handle_user_workflow(&site_data, &password_str) {
+        eprintln!("Warning: Error in user workflow: {}", e);
+    }
+
+    let master_pass = SecStr::from(password);
+    display_identicon(&master_pass, &user);
 }
