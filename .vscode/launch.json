@@ -1,0 +1,75 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug with 'google' parameter",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/debug/mpw",
+            "args": ["google"],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "rust: cargo build",
+            "sourceLanguages": ["rust"]
+        },
+        {
+            "name": "Debug with 'google' and template",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/debug/mpw",
+            "args": ["google", "--template", "long"],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "rust: cargo build",
+            "sourceLanguages": ["rust"]
+        },
+        {
+            "name": "Debug with 'google' and username",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/debug/mpw",
+            "args": ["google", "-n", "myusername"],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "rust: cargo build",
+            "sourceLanguages": ["rust"]
+        },
+        {
+            "name": "Debug with 'google' and counter",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/debug/mpw",
+            "args": ["google", "-c", "2"],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "rust: cargo build",
+            "sourceLanguages": ["rust"]
+        },
+        {
+            "name": "Debug in regex search mode",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/debug/mpw",
+            "args": ["-r", "google"],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "rust: cargo build",
+            "sourceLanguages": ["rust"]
+        },
+        {
+            "name": "Debug in setup mode",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/debug/mpw",
+            "args": ["--setup"],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "rust: cargo build",
+            "sourceLanguages": ["rust"]
+        },
+        {
+            "name": "Debug with all options",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/debug/mpw",
+            "args": ["google", "-t", "long", "-n", "myusername", "-c", "2"],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "rust: cargo build",
+            "sourceLanguages": ["rust"]
+        }
+    ]
+}

@@ -1,0 +1,32 @@
+<wpf:ResourceDictionary xml:space="preserve" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:s="clr-namespace:System;assembly=mscorlib" xmlns:ss="urn:shemas-jetbrains-com:settings-storage-xaml" xmlns:wpf="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+	<s:Boolean x:Key="/Default/UserDictionary/Words/=mpw/@EntryIndexedValue">True</s:Boolean>
+	<s:Boolean x:Key="/Default/UserDictionary/Words/=rusterpassword/@EntryIndexedValue">True</s:Boolean>
+	<s:String x:Key="/Default/CodeInspection/Highlighting/InspectionSeverities/=MemberCanBePrivate_002EGlobal/@EntryIndexedValue">DO_NOT_SHOW</s:String>
+	<s:String x:Key="/Default/CodeInspection/Highlighting/InspectionSeverities/=UnusedMember_002EGlobal/@EntryIndexedValue">DO_NOT_SHOW</s:String>
+	<s:String x:Key="/Default/CodeStyle/Naming/CSharpNaming/Abbreviations/=AES/@EntryIndexedValue">AES</s:String>
+	<s:String x:Key="/Default/CodeStyle/Naming/CSharpNaming/Abbreviations/=GCM/@EntryIndexedValue">GCM</s:String>
+	<s:String x:Key="/Default/CodeStyle/Naming/CSharpNaming/Abbreviations/=JSON/@EntryIndexedValue">JSON</s:String>
+	<s:String x:Key="/Default/CodeStyle/Naming/CSharpNaming/Abbreviations/=SHA/@EntryIndexedValue">SHA</s:String>
+	<s:Boolean x:Key="/Default/RunConfigs/Config/=AD5370A425A0D04A9251D3D5BCE77EA9/@KeyIndexDefined">True</s:Boolean>
+	<s:String x:Key="/Default/RunConfigs/Config/=AD5370A425A0D04A9251D3D5BCE77EA9/Type/@EntryValue">project</s:String>
+	<s:String x:Key="/Default/RunConfigs/Config/=AD5370A425A0D04A9251D3D5BCE77EA9/Name/@EntryValue">Debug with google</s:String>
+	<s:String x:Key="/Default/RunConfigs/Config/=AD5370A425A0D04A9251D3D5BCE77EA9/CommandLine/@EntryValue">google</s:String>
+	<s:String x:Key="/Default/RunConfigs/Config/=AD5370A425A0D04A9251D3D5BCE77EA9/BuildTarget/@EntryValue">Default</s:String>
+	<s:String x:Key="/Default/RunConfigs/Config/=AD5370A425A0D04A9251D3D5BCE77EA9/ProjectGuid/@EntryValue">D5E0C799-6F06-4AEE-A32D-5180EA9E0DD0</s:String>
+	<s:String x:Key="/Default/RunConfigs/Config/=AD5370A425A0D04A9251D3D5BCE77EA9/DefaultAction/@EntryValue">run</s:String>
+	<s:String x:Key="/Default/RunConfigs/Active/@EntryValue">AD5370A425A0D04A9251D3D5BCE77EA9</s:String>
+	<s:Boolean x:Key="/Default/RunConfigs/Config/=B71C8A148590F146A942EC97E981665A/@KeyIndexDefined">True</s:Boolean>
+	<s:String x:Key="/Default/RunConfigs/Config/=B71C8A148590F146A942EC97E981665A/Type/@EntryValue">project</s:String>
+	<s:String x:Key="/Default/RunConfigs/Config/=B71C8A148590F146A942EC97E981665A/Name/@EntryValue">Debug with google and template</s:String>
+	<s:String x:Key="/Default/RunConfigs/Config/=B71C8A148590F146A942EC97E981665A/CommandLine/@EntryValue">google --template long</s:String>
+	<s:String x:Key="/Default/RunConfigs/Config/=B71C8A148590F146A942EC97E981665A/BuildTarget/@EntryValue">Default</s:String>
+	<s:String x:Key="/Default/RunConfigs/Config/=B71C8A148590F146A942EC97E981665A/ProjectGuid/@EntryValue">D5E0C799-6F06-4AEE-A32D-5180EA9E0DD0</s:String>
+	<s:String x:Key="/Default/RunConfigs/Config/=B71C8A148590F146A942EC97E981665A/DefaultAction/@EntryValue">run</s:String>
+	<s:Boolean x:Key="/Default/RunConfigs/Config/=C89C5F247BB0A842B4A3E3C79A347A80/@KeyIndexDefined">True</s:Boolean>
+	<s:String x:Key="/Default/RunConfigs/Config/=C89C5F247BB0A842B4A3E3C79A347A80/Type/@EntryValue">project</s:String>
+	<s:String x:Key="/Default/RunConfigs/Config/=C89C5F247BB0A842B4A3E3C79A347A80/Name/@EntryValue">Debug setup mode</s:String>
+	<s:String x:Key="/Default/RunConfigs/Config/=C89C5F247BB0A842B4A3E3C79A347A80/CommandLine/@EntryValue">--setup</s:String>
+	<s:String x:Key="/Default/RunConfigs/Config/=C89C5F247BB0A842B4A3E3C79A347A80/BuildTarget/@EntryValue">Default</s:String>
+	<s:String x:Key="/Default/RunConfigs/Config/=C89C5F247BB0A842B4A3E3C79A347A80/ProjectGuid/@EntryValue">D5E0C799-6F06-4AEE-A32D-5180EA9E0DD0</s:String>
+	<s:String x:Key="/Default/RunConfigs/Config/=C89C5F247BB0A842B4A3E3C79A347A80/DefaultAction/@EntryValue">run</s:String>
+</wpf:ResourceDictionary>
