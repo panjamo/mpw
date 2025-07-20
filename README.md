@@ -9,7 +9,8 @@ A command-line password manager that generates secure, deterministic passwords b
 - **Site Data Integration**: Loads site configuration from `main.json` file
 - **Clipboard Integration**: Automatically copies usernames and passwords to clipboard
 - **Website Auto-opening**: Opens websites in your default browser
-- **Secure Credential Storage**: Dual storage system with Windows Credential Manager and machine-encrypted local files
+- **Secure Credential Storage**: Prioritized credential storage in Windows Credential Manager with optional encrypted backup
+- **Enhanced Credential Reliability**: Thorough verification of keyring storage with smart fallback system
 - **Regex Search**: Search through site entries using regular expressions
 - **Interactive Setup**: Comprehensive credential management interface
 
@@ -43,6 +44,7 @@ mpw <site_name> [OPTIONS]
 | `--counter` | `-c` | Counter for password generation (default: 1) |
 | `--regex` | `-r` | Search pattern to find matching entries |
 | `--setup` | | Interactive credential management mode |
+| `--force-keyring-fail` | | Force keyring to fail (for testing backup file creation) |
 
 ### Examples
 
@@ -112,7 +114,8 @@ Choose an option (1-4): 1
 New default username: user@example.com
 New default master password: [hidden input]
 ✓ Credentials updated in keyring.
-✓ Encrypted credentials saved to local file.
+✓ Credentials verified successfully.
+✓ Keyring storage working correctly, no backup file needed.
 ✓ Default credentials updated successfully.
 
 Choose an option (1-4): 2
@@ -121,7 +124,6 @@ Choose an option (1-4): 2
 Username: user@example.com
 Password: [hidden]
 Source: Windows Credential Manager
-Backup: Encrypted local file also available
 
 Choose an option (1-4): 4
 Goodbye!
@@ -196,25 +198,29 @@ When generating a password for a site with stored data:
 
 ### Credential Storage
 
-The tool uses a dual storage system for maximum reliability and security:
+The tool uses a smart credential storage system for maximum security and reliability:
 
 1. **Primary: Windows Credential Manager** (or system keyring on other platforms)
    - Credentials stored securely in the system's native credential store
    - Accessed through the Windows Credential Manager interface
    - Fully integrated with Windows security infrastructure
+   - Robust verification after storage to ensure reliability
+   - Detailed error reporting for troubleshooting
 
 2. **Fallback: Machine-Encrypted Local File** (`.mpw_credentials`)
+   - Created ONLY if Windows Credential Manager fails
    - Located in the same directory as the executable
    - Encrypted using AES-256-GCM with machine-specific key
    - Encryption key derived from Windows Machine GUID (or Linux machine-id/hostname)
    - Cannot be decrypted on different machines
-   - Provides backup when system keyring is unavailable
+   - Automatically removed when Credential Manager works properly
 
 3. **Storage Priority**:
-   - Checks Windows Credential Manager first
-   - Falls back to encrypted local file if keyring unavailable
+   - Always attempts to use Windows Credential Manager first
+   - Falls back to encrypted local file ONLY if keyring unavailable
    - Prompts for new credentials if neither exists
-   - Always maintains both storage methods when possible
+   - Optimized to minimize credential duplication
+   - Maintains only one storage method when possible
 
 4. **Security Features**:
    - Machine-specific encryption prevents credential theft
@@ -225,7 +231,7 @@ The tool uses a dual storage system for maximum reliability and security:
 ## Security Considerations
 
 - **Master Password Handling**: Uses secure strings (`SecStr`) to protect in-memory credentials
-- **Dual Storage System**: Primary storage in Windows Credential Manager with encrypted local backup
+- **Smart Storage System**: Primary storage in Windows Credential Manager with encrypted local backup only when needed
 - **Machine-Specific Encryption**: Local files encrypted with machine GUID, preventing cross-machine access
 - **Authenticated Encryption**: AES-256-GCM prevents tampering and ensures data integrity
 - **No Plaintext Storage**: Credentials never stored in plaintext on disk
@@ -235,7 +241,7 @@ The tool uses a dual storage system for maximum reliability and security:
 
 - **rusterpassword**: Master Password algorithm implementation
 - **clap**: Command-line argument parsing
-- **keyring**: System keyring/credential manager integration
+- **keyring**: System keyring/credential manager integration (version 2.3.2+) with enhanced reliability
 - **aes-gcm**: AES-256-GCM encryption for local credential storage
 - **winreg**: Windows registry access for Machine GUID (Windows only)
 - **sha2**: SHA-256 hashing for key derivation
@@ -244,6 +250,40 @@ The tool uses a dual storage system for maximum reliability and security:
 - **webbrowser**: Website opening functionality
 - **regex**: Pattern matching for search
 - **serde**: JSON serialization/deserialization
+
+## Debugging Credential Storage
+
+For testing or diagnosing issues with credential storage:
+
+### Force Keyring Failure
+
+The `--force-keyring-fail` flag can be used to deliberately bypass the Windows Credential Manager:
+
+```bash
+mpw --setup --force-keyring-fail
+```
+
+This forces the application to use the encrypted backup file storage, which is useful for:
+- Testing the fallback mechanism
+- Diagnosing Windows Credential Manager issues
+- Using the tool when Windows security policies restrict credential manager access
+
+### Verbose Logging
+
+The application provides detailed diagnostic messages about credential operations:
+- Success/failure of keyring operations
+- Verification of stored credentials
+- Creation and management of backup files
+- Source of retrieved credentials
+
+Example output:
+```
+Attempting to retrieve credentials from keyring...
+✓ Successfully created keyring entry objects
+✓ Successfully retrieved credentials from keyring
+✓ Credential verification successful
+✓ Keyring storage working correctly, no backup file needed.
+```
 
 ## Building
 
@@ -265,6 +305,28 @@ The tool provides informative error messages for:
 - Clipboard operation failures
 - Credential management issues
 - File I/O errors
+- Keyring access failures
+- Backup file creation/retrieval problems
+
+## Troubleshooting
+
+### Windows Credential Manager Issues
+
+If you experience problems with credential storage:
+
+1. **Check Access Permissions**: Ensure your user has access to Windows Credential Manager
+2. **Run in Admin Mode**: Some systems may require elevated privileges
+3. **Use Backup Mode**: Use `--force-keyring-fail` to rely on the encrypted backup file
+4. **Check Diagnostics**: Review the detailed messages for specific error information
+5. **Verify Installation**: Check that keyring version 2.3.2+ is being used for best compatibility
+
+### Backup File Issues
+
+If backup file storage isn't working:
+
+1. **Check Write Permissions**: Ensure the application can write to its directory
+2. **Machine GUID Access**: The application needs registry read access to get the machine GUID
+3. **Look for Error Details**: The application shows specific error messages for encryption/decryption problems
 
 ## License
 
