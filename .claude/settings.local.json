@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(cargo:*)",
-      "Bash(./target/debug/mpw:*)"
+      "Bash(./target/debug/mpw:*)",
+      "Bash(git config:*)"
     ],
     "deny": []
   }

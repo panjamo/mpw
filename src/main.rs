@@ -1,3 +1,5 @@
+use keyring::Entry;
+
 use aes_gcm::{
     Aes256Gcm, Nonce,
     aead::{Aead, AeadCore, KeyInit, OsRng},
@@ -5,7 +7,6 @@ use aes_gcm::{
 use arboard::Clipboard;
 use base64::{Engine as _, engine::general_purpose};
 use clap::{ArgAction, Parser};
-use keyring::Entry;
 use regex::Regex;
 use rusterpassword::*;
 use secstr::SecStr;
@@ -64,9 +65,30 @@ struct EncryptedCredentials {
 
 #[cfg(windows)]
 fn get_machine_guid() -> Result<String, Box<dyn std::error::Error>> {
+    println!("Retrieving Windows machine GUID...");
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let crypto_key = hklm.open_subkey("SOFTWARE\\Microsoft\\Cryptography")?;
-    let machine_guid: String = crypto_key.get_value("MachineGuid")?;
+    let crypto_key = match hklm.open_subkey("SOFTWARE\\Microsoft\\Cryptography") {
+        Ok(key) => {
+            println!("✓ Successfully opened Cryptography registry key");
+            key
+        },
+        Err(e) => {
+            println!("⚠ Error opening Cryptography registry key: {}", e);
+            return Err(Box::new(e));
+        }
+    };
+    
+    let machine_guid: String = match crypto_key.get_value("MachineGuid") {
+        Ok(guid) => {
+            println!("✓ Successfully retrieved MachineGuid");
+            guid
+        },
+        Err(e) => {
+            println!("⚠ Error retrieving MachineGuid: {}", e);
+            return Err(Box::new(e));
+        }
+    };
+    
     Ok(machine_guid)
 }
 
@@ -146,6 +168,13 @@ struct Args {
     site: Option<String>,
 
     #[arg(
+        long,
+        help = "Force keyring to fail (for testing backup file creation)",
+        action = ArgAction::SetTrue
+    )]
+    force_keyring_fail: bool,
+
+    #[arg(
         short,
         long,
         help = "Password template. Available: long, short, basic, pin, medium, maximum"
@@ -206,13 +235,40 @@ fn save_encrypted_credentials(
 
 fn load_encrypted_credentials() -> Result<(String, String), Box<dyn std::error::Error>> {
     let creds_path = get_credentials_file_path();
+    println!("Checking for encrypted credentials file at {:?}", creds_path);
+    
     if !creds_path.exists() {
+        println!("⚠ No encrypted credentials file found at {:?}", creds_path);
         return Err("No encrypted credentials file found".into());
     }
 
-    let content = fs::read_to_string(creds_path)?;
+    println!("Reading encrypted credentials file...");
+    let content = fs::read_to_string(&creds_path)?;
     let encrypted: EncryptedCredentials = serde_json::from_str(&content)?;
-    decrypt_credentials(&encrypted)
+    println!("✓ Encrypted credentials file parsed successfully");
+    
+    println!("Attempting to decrypt credentials...");
+    let result = decrypt_credentials(&encrypted);
+    if result.is_ok() {
+        println!("✓ Credentials decrypted successfully");
+    } else {
+        println!("⚠ Failed to decrypt credentials");
+    }
+    result
+}
+
+// Display current credentials source in a friendly way
+fn get_credentials_source_description(source_type: &str) -> &'static str {
+    match source_type {
+        "keyring" => "Windows Credential Manager",
+        "file" => "Encrypted local file",
+        _ => "Unknown source"
+    }
+}
+
+// Check if file exists without reading it
+fn check_credentials_file_exists() -> bool {
+    get_credentials_file_path().exists()
 }
 
 fn load_site_data(site_name: &str) -> Result<Option<SiteEntry>, Box<dyn std::error::Error>> {
@@ -398,30 +454,77 @@ fn setup_credentials() -> Result<(), Box<dyn std::error::Error>> {
                 let password = rpassword::prompt_password("New default master password: ")?;
 
                 // Update keyring
-                if let (Ok(user_entry), Ok(password_entry)) = (
+                let mut keyring_ok = false;
+                
+                // Check if we should force keyring to fail
+                let args = Args::parse();
+                if args.force_keyring_fail {
+                    println!("⚠ Keyring access deliberately disabled by --force-keyring-fail flag");
+                } else if let (Ok(user_entry), Ok(password_entry)) = (
                     Entry::new("mpw", "default_user"),
                     Entry::new("mpw", "default_password"),
                 ) {
-                    if user_entry.set_password(&user).is_ok()
-                        && password_entry.set_password(&password).is_ok()
-                    {
+                    let user_result = user_entry.set_password(&user);
+                    let pass_result = password_entry.set_password(&password);
+                    
+                    if user_result.is_ok() && pass_result.is_ok() {
                         println!("✓ Credentials updated in keyring.");
+                        
+                        // Verify credentials were saved correctly
+                        match (user_entry.get_password(), password_entry.get_password()) {
+                            (Ok(saved_user), Ok(saved_pass)) => {
+                                if saved_user == user && saved_pass == password {
+                                    println!("✓ Credentials verified successfully.");
+                                    keyring_ok = true;
+                                } else {
+                                    println!("⚠ Credential verification failed - saved values don't match.");
+                                    println!("  Expected username: {}, Got: {}", user, saved_user);
+                                    println!("  Password match: {}", saved_pass == password);
+                                }
+                            },
+                            (Err(e), _) => println!("⚠ Error verifying username: {}", e),
+                            (_, Err(e)) => println!("⚠ Error verifying password: {}", e),
+                        }
                     } else {
-                        println!("⚠ Could not update credentials in keyring.");
+                        if let Err(e) = user_result {
+                            println!("⚠ Could not store username in keyring: {}", e);
+                        }
+                        if let Err(e) = pass_result {
+                            println!("⚠ Could not store password in keyring: {}", e);
+                        }
                     }
+                } else {
+                    println!("⚠ Could not create keyring entries.");
                 }
 
-                // Update encrypted file storage
-                if let Err(e) = save_encrypted_credentials(&user, &password) {
-                    println!("⚠ Could not save encrypted credentials to file: {}", e);
+                // Only update encrypted file storage if keyring failed
+                
+                if !keyring_ok {
+                    println!("Keyring storage not working, saving backup file...");
+                    if let Err(e) = save_encrypted_credentials(&user, &password) {
+                        println!("⚠ Could not save encrypted backup file: {}", e);
+                    } else {
+                        println!("✓ Encrypted credentials saved to local file.");
+                    }
                 } else {
-                    println!("✓ Encrypted credentials saved to local file.");
+                    println!("✓ Keyring storage working correctly, no backup file needed.");
+                    
+                    // Remove any existing backup file
+                    let creds_path = get_credentials_file_path();
+                    if creds_path.exists() {
+                        if let Err(e) = fs::remove_file(&creds_path) {
+                            println!("⚠ Could not remove old backup file: {}", e);
+                        } else {
+                            println!("✓ Old backup file removed.");
+                        }
+                    }
                 }
 
                 println!("✓ Default credentials updated successfully.\n");
             }
             "2" => {
                 println!("\n--- Current Credentials ---");
+                let _file_exists = check_credentials_file_exists();
                 let mut found_credentials = false;
 
                 // Check Windows Credential Manager first
@@ -433,18 +536,18 @@ fn setup_credentials() -> Result<(), Box<dyn std::error::Error>> {
                         if !user.is_empty() {
                             println!("Username: {}", user);
                             println!("Password: [hidden]");
-                            println!("Source: Windows Credential Manager");
+                            println!("Source: {}", get_credentials_source_description("keyring"));
                             found_credentials = true;
                         }
                     }
                 }
 
-                // Check encrypted file
+                // Check encrypted local file
                 if let Ok((user, _)) = load_encrypted_credentials() {
                     if !found_credentials {
                         println!("Username: {}", user);
                         println!("Password: [hidden]");
-                        println!("Source: Encrypted local file");
+                        println!("Source: {}", get_credentials_source_description("file"));
                     } else {
                         println!("Backup: Encrypted local file also available");
                     }
@@ -464,17 +567,28 @@ fn setup_credentials() -> Result<(), Box<dyn std::error::Error>> {
                 io::stdin().read_line(&mut confirm)?;
 
                 if confirm.trim().to_lowercase() == "y" {
-                    // Clear keyring (by overwriting with empty values)
-                    if let (Ok(user_entry), Ok(password_entry)) = (
+                    // Clear keyring entries
+                    if let (Ok(user_entry), Ok(pass_entry)) = (
                         Entry::new("mpw", "default_user"),
                         Entry::new("mpw", "default_password"),
                     ) {
-                        let _ = user_entry.set_password("");
-                        let _ = password_entry.set_password("");
-                        println!("✓ Cleared keyring credentials.");
+                        let user_result = user_entry.delete_password();
+                        let pass_result = pass_entry.delete_password();
+                        
+                        if user_result.is_ok() && pass_result.is_ok() {
+                            println!("✓ Cleared keyring credentials.");
+                        } else {
+                            println!("⚠ Warning: Could not completely clear keyring credentials.");
+                            if let Err(e) = user_result {
+                                println!("  Username error: {}", e);
+                            }
+                            if let Err(e) = pass_result {
+                                println!("  Password error: {}", e);
+                            }
+                        }
                     }
 
-                    // Clear encrypted file
+                    // Always clear encrypted backup file when requested
                     let creds_path = get_credentials_file_path();
                     if creds_path.exists() {
                         if let Err(e) = fs::remove_file(&creds_path) {
@@ -482,6 +596,8 @@ fn setup_credentials() -> Result<(), Box<dyn std::error::Error>> {
                         } else {
                             println!("✓ Removed encrypted credentials file.");
                         }
+                    } else {
+                        println!("ℹ No backup file found to remove.");
                     }
 
                     println!("✓ All stored credentials cleared.\n");
@@ -502,25 +618,14 @@ fn setup_credentials() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn get_or_store_credentials() -> Result<(String, String), Box<dyn std::error::Error>> {
-    // Try Windows Credential Manager first
-    if let (Ok(user_entry), Ok(password_entry)) = (
-        Entry::new("mpw", "default_user"),
-        Entry::new("mpw", "default_password"),
-    ) {
-        if let (Ok(user), Ok(password)) = (user_entry.get_password(), password_entry.get_password())
-        {
-            if !user.is_empty() && !password.is_empty() {
-                return Ok((user, password));
-            }
-        }
-    }
-
-    // Try encrypted local file as fallback
+// Try to get credentials from backup file or prompt user
+fn try_backup_file_or_prompt() -> Result<(String, String), Box<dyn std::error::Error>> {
+    // Try backup file first
     if let Ok((user, password)) = load_encrypted_credentials() {
+        println!("✓ Retrieved credentials from backup file");
         return Ok((user, password));
     }
-
+    
     // No stored credentials found, prompt user
     println!("No stored credentials found. Please set up default credentials:");
     print!("Default username: ");
@@ -530,34 +635,130 @@ fn get_or_store_credentials() -> Result<(String, String), Box<dyn std::error::Er
     let user = user.trim().to_string();
 
     let password = rpassword::prompt_password("Default master password: ")?;
+    
+    Ok((user, password))
+}
 
-    // Try to store in Windows Credential Manager first
-    let mut keyring_success = false;
+fn get_or_store_credentials() -> Result<(String, String), Box<dyn std::error::Error>> {
+    // Check if we should force keyring to fail
+    let args = Args::parse();
+    if args.force_keyring_fail {
+        println!("\n⚠ Keyring access deliberately disabled by --force-keyring-fail flag");
+        return try_backup_file_or_prompt();
+    }
+
+    println!("\nAttempting to retrieve credentials from keyring...");
+    
+    let mut keyring_tried = false;
+    
+    // Try Windows Credential Manager first
     if let (Ok(user_entry), Ok(password_entry)) = (
         Entry::new("mpw", "default_user"),
         Entry::new("mpw", "default_password"),
     ) {
-        if user_entry.set_password(&user).is_ok() && password_entry.set_password(&password).is_ok()
-        {
-            println!("Credentials stored securely in Windows Credential Manager.");
-            keyring_success = true;
-        }
-    }
-
-    // Store encrypted backup file regardless
-    if let Err(e) = save_encrypted_credentials(&user, &password) {
-        if !keyring_success {
-            return Err(format!("Could not store credentials anywhere: {}", e).into());
-        } else {
-            println!("Warning: Could not save encrypted backup file: {}", e);
+        println!("✓ Successfully created keyring entry objects");
+        keyring_tried = true;
+        
+        match (user_entry.get_password(), password_entry.get_password()) {
+            (Ok(user), Ok(password)) => {
+                if !user.is_empty() && !password.is_empty() {
+                    println!("✓ Successfully retrieved credentials from keyring");
+                    return Ok((user, password));
+                } else {
+                    println!("⚠ Credentials exist in keyring but are empty");
+                }
+            },
+            (Err(e), _) => {
+                println!("⚠ Error retrieving username from keyring: {}", e);
+            },
+            (_, Err(e)) => {
+                println!("⚠ Error retrieving password from keyring: {}", e);
+            }
         }
     } else {
-        println!("Encrypted backup file saved.");
+        println!("⚠ Could not create keyring entry objects");
+    }
+
+    // Try encrypted local file as fallback only if keyring was tried but failed
+    if keyring_tried {
+        return try_backup_file_or_prompt();
+    } else {
+        println!("⚠ Keyring not available, and no backup attempted");
+    }
+
+    // No stored credentials, prompt for input
+    let (user, password) = try_backup_file_or_prompt()?;
+
+    // Try to store in Windows Credential Manager first
+    let mut keyring_success = false;
+    println!("\nAttempting to store credentials in keyring...");
+    
+    // Check if we should force keyring to fail
+    let args = Args::parse();
+    if args.force_keyring_fail {
+        println!("⚠ Keyring access deliberately disabled by --force-keyring-fail flag");
+    } else if let (Ok(user_entry), Ok(password_entry)) = (
+        Entry::new("mpw", "default_user"),
+        Entry::new("mpw", "default_password"),
+    ) {
+        println!("✓ Successfully created keyring entry objects");
+        
+        let user_result = user_entry.set_password(&user);
+        let pass_result = password_entry.set_password(&password);
+        
+        if user_result.is_ok() && pass_result.is_ok() {
+            println!("✓ Credentials stored in keyring");
+            
+            // Verify the credentials were stored correctly
+            match (user_entry.get_password(), password_entry.get_password()) {
+                (Ok(stored_user), Ok(stored_pass)) => {
+                    if stored_user == user && stored_pass == password {
+                        println!("✓ Credential verification successful");
+                        keyring_success = true;
+                    } else {
+                        println!("⚠ Credential verification failed - stored values don't match");
+                        println!("  Username match: {}", stored_user == user);
+                        println!("  Password match: {}", stored_pass == password);
+                    }
+                },
+                (Err(e), _) => println!("⚠ Error verifying username: {}", e),
+                (_, Err(e)) => println!("⚠ Error verifying password: {}", e),
+            }
+        } else {
+            if let Err(e) = user_result {
+                println!("⚠ Failed to store username: {}", e);
+            }
+            if let Err(e) = pass_result {
+                println!("⚠ Failed to store password: {}", e);
+            }
+        }
+    } else {
+        println!("⚠ Could not create keyring entry objects");
+    }
+
+    // Store encrypted backup file only if keyring storage failed
+    if !keyring_success {
+        println!("Keyring storage failed, saving to backup file...");
+        if let Err(e) = save_encrypted_credentials(&user, &password) {
+            return Err(format!("Could not store credentials anywhere: {}", e).into());
+        } else {
+            println!("✓ Encrypted backup file saved.");
+        }
+    } else {
+        // Remove any existing backup file
+        let creds_path = get_credentials_file_path();
+        if creds_path.exists() {
+            if let Err(e) = fs::remove_file(&creds_path) {
+                println!("⚠ Could not remove old backup file: {}", e);
+            } else {
+                println!("✓ Old backup file removed as keyring is working.");
+            }
+        }
     }
 
     if !keyring_success {
         println!(
-            "Warning: Could not store in Windows Credential Manager, using encrypted file only."
+            "⚠ Warning: Could not store in keyring, using encrypted file only."
         );
     }
 
@@ -719,8 +920,19 @@ fn display_identicon(master_pass: &SecStr, user: &str) {
 
 fn main() {
     let args = Args::parse();
+    
+    // Debug prints
+    println!("[DEBUG] Arguments received:");
+    println!("[DEBUG] Site: {:?}", args.site);
+    println!("[DEBUG] Template: {:?}", args.template);
+    println!("[DEBUG] User: {:?}", args.user);
+    println!("[DEBUG] Counter: {:?}", args.counter);
+    println!("[DEBUG] Regex: {:?}", args.regex);
+    println!("[DEBUG] Setup: {}", args.setup);
+    println!("[DEBUG] Force keyring fail: {}", args.force_keyring_fail);
 
     if args.setup {
+        println!("[DEBUG] Entering setup mode");
         if let Err(e) = handle_setup_mode() {
             eprintln!("Error in setup mode: {}", e);
             std::process::exit(1);
@@ -729,6 +941,7 @@ fn main() {
     }
 
     if let Some(regex_pattern) = args.regex {
+        println!("[DEBUG] Handling regex search with pattern: {}", regex_pattern);
         if let Err(e) = handle_regex_search(&regex_pattern) {
             eprintln!("Error searching entries: {}", e);
             std::process::exit(1);
@@ -737,7 +950,10 @@ fn main() {
     }
 
     let site_name = match args.site {
-        Some(site) => site,
+        Some(site) => {
+            println!("[DEBUG] Using site name: {}", site);
+            site
+        },
         None => {
             eprintln!(
                 "Error: Site name is required for password generation. Use --site or --regex option."
@@ -747,7 +963,10 @@ fn main() {
     };
 
     let (user, password) = match resolve_credentials(args.user, args.password) {
-        Ok(creds) => creds,
+        Ok(creds) => {
+            println!("[DEBUG] Credentials resolved successfully for user: {}", creds.0);
+            creds
+        },
         Err(e) => {
             eprintln!("Error getting credentials: {}", e);
             std::process::exit(1);
