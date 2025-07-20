@@ -142,7 +142,7 @@ fn decrypt_credentials(
 #[command(name = "mpw-rs")]
 #[command(about = "A CLI tool for generating passwords using the rusterpassword crate")]
 struct Args {
-    #[arg(short, long, help = "Site name")]
+    #[arg(help = "Site name")]
     site: Option<String>,
 
     #[arg(

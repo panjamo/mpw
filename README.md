@@ -29,14 +29,14 @@ A command-line password manager that generates secure, deterministic passwords b
 ### Basic Password Generation
 
 ```bash
-mpw --site <site_name> [OPTIONS]
+mpw <site_name> [OPTIONS]
 ```
 
 ### Command Line Options
 
 | Option | Short | Description |
 |--------|-------|-------------|
-| `--site` | `-s` | Site name (required for password generation) |
+| `<site_name>` | | Site name (required positional argument) |
 | `--template` | `-t` | Password template: `long`, `short`, `basic`, `pin`, `medium`, `maximum` |
 | `--password` | `-p` | Master password (if not using stored credentials) |
 | `--user` | `-n` | Username (if not using stored credentials) |
@@ -48,17 +48,17 @@ mpw --site <site_name> [OPTIONS]
 
 #### Generate password for a site
 ```bash
-mpw --site github
+mpw github
 ```
 
 #### Generate password with specific template
 ```bash
-mpw --site github --template short
+mpw github --template short
 ```
 
 #### Generate password with custom counter
 ```bash
-mpw --site github --counter 2
+mpw github --counter 2
 ```
 
 #### Search for sites matching a pattern
