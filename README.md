@@ -45,6 +45,7 @@ mpw <site_name> [OPTIONS]
 | `--regex` | `-r` | Search pattern to find matching entries |
 | `--setup` | | Interactive credential management mode |
 | `--force-keyring-fail` | | Force keyring to fail (for testing backup file creation) |
+| `--generate-completion` | | Generate shell completion script (value: bash, elvish, fish, powershell, zsh) |
 
 ### Examples
 
@@ -103,6 +104,72 @@ Choose an option (1-4):
 ```bash
 $ mpw --setup
 === MPW Credential Management ===
+```
+
+### Shell Completion
+
+Generate tab completion scripts for various shells:
+
+```bash
+# Bash
+mpw --generate-completion bash > mpw_completion.bash
+
+# Zsh
+mpw --generate-completion zsh > _mpw
+
+# Fish
+mpw --generate-completion fish > mpw.fish
+
+# PowerShell
+mpw --generate-completion powershell > mpw_completion.ps1
+
+# Elvish
+mpw --generate-completion elvish > mpw.elv
+```
+
+Then in your shell's configuration, source the appropriate file to enable tab completion.
+
+For PowerShell:
+
+```powershell
+# Add this to your PowerShell profile (~\Documents\PowerShell\Microsoft.PowerShell_profile.ps1)
+. "C:\path\to\mpw_completion.ps1"
+```
+
+To find your PowerShell profile location:
+
+```powershell
+echo $PROFILE
+```
+
+If the profile doesn't exist yet, you can create it:
+
+```powershell
+New-Item -Path $PROFILE -Type File -Force
+```
+
+For Bash (add to .bashrc):
+```bash
+source /path/to/mpw_completion.bash
+```
+
+For Zsh (place _mpw in a directory in your fpath):
+```bash
+# Example - add to .zshrc
+fpath=(/path/to/completion/directory $fpath)
+compinit
+```
+
+For Fish (place in ~/.config/fish/completions/):
+```bash
+ln -s /path/to/mpw.fish ~/.config/fish/completions/
+```
+
+For Elvish (add to rc.elv):
+```bash
+eval (cat /path/to/mpw.elv)
+```
+
 1. Change default credentials
 2. View current credentials
 3. Clear stored credentials

@@ -6,7 +6,8 @@ use aes_gcm::{
 };
 use arboard::Clipboard;
 use base64::{Engine as _, engine::general_purpose};
-use clap::{ArgAction, Parser};
+use clap::{ArgAction, Parser, CommandFactory, ValueEnum};
+use clap_complete::{generate, shells::{Bash, Elvish, Fish, PowerShell, Zsh}};
 use regex::Regex;
 use rusterpassword::*;
 use secstr::SecStr;
@@ -160,9 +161,47 @@ fn decrypt_credentials(
     Ok((credentials.username, credentials.password))
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]
+enum TemplateType {
+    Long,
+    Short,
+    Basic,
+    Pin,
+    Medium,
+    Maximum,
+}
+
+impl std::fmt::Display for TemplateType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            TemplateType::Long => "long",
+            TemplateType::Short => "short",
+            TemplateType::Basic => "basic",
+            TemplateType::Pin => "pin",
+            TemplateType::Medium => "medium",
+            TemplateType::Maximum => "maximum",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+impl TemplateType {
+    fn to_template(&self) -> &'static [&'static str] {
+        match self {
+            TemplateType::Long => TEMPLATES_LONG,
+            TemplateType::Short => TEMPLATES_SHORT,
+            TemplateType::Basic => TEMPLATES_BASIC,
+            TemplateType::Pin => TEMPLATES_PIN,
+            TemplateType::Medium => TEMPLATES_MEDIUM,
+            TemplateType::Maximum => TEMPLATES_MAXIMUM,
+        }
+    }
+    
+}
+
 #[derive(Parser)]
-#[command(name = "mpw-rs")]
-#[command(about = "A CLI tool for generating passwords using the rusterpassword crate")]
+#[command(name = "mpw")]
+#[command(about = "A CLI tool for generating passwords using the rusterpassword crate", version)]
 struct Args {
     #[arg(help = "Site name")]
     site: Option<String>,
@@ -177,9 +216,9 @@ struct Args {
     #[arg(
         short,
         long,
-        help = "Password template. Available: long, short, basic, pin, medium, maximum"
+        help = "Password template (long, short, basic, pin, medium, maximum)"
     )]
-    template: Option<String>,
+    template: Option<TemplateType>,
 
     #[arg(short, long, help = "Master password")]
     password: Option<String>,
@@ -203,6 +242,14 @@ struct Args {
         action = ArgAction::SetTrue
     )]
     setup: bool,
+
+    #[arg(
+        long = "generate-completion",
+        help = "Generate shell completion script",
+        value_name = "SHELL",
+        value_parser = ["bash", "elvish", "fish", "powershell", "zsh"]
+    )]
+    generate_completion: Option<String>,
 }
 
 fn get_main_json_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -802,46 +849,30 @@ fn resolve_credentials(
     }
 }
 
-fn resolve_template_name(args_template: Option<String>, site_data: &Option<SiteEntry>) -> String {
-    args_template.unwrap_or_else(|| {
-        site_data
+fn resolve_template_name(args_template: Option<TemplateType>, site_data: &Option<SiteEntry>) -> String {
+    match args_template {
+        Some(template) => template.to_string(),
+        None => site_data
             .as_ref()
             .map(|d| d.password_type.clone())
             .unwrap_or_else(|| "GeneratedLong".to_string())
-    })
+    }
 }
 
 fn resolve_template(
-    args_template: Option<String>,
+    args_template: Option<TemplateType>,
     site_data: &Option<SiteEntry>,
 ) -> &'static [&'static str] {
-    let template_str = resolve_template_name(args_template, site_data);
-
-    if let Some(data) = site_data {
-        password_type_to_template(&data.password_type)
-    } else {
-        match template_str.as_str() {
-            "long" => TEMPLATES_LONG,
-            "short" => TEMPLATES_SHORT,
-            "basic" => TEMPLATES_BASIC,
-            "pin" => TEMPLATES_PIN,
-            "medium" => TEMPLATES_MEDIUM,
-            "maximum" => TEMPLATES_MAXIMUM,
-            "GeneratedLong" => TEMPLATES_LONG,
-            "GeneratedShort" => TEMPLATES_SHORT,
-            "GeneratedBasic" => TEMPLATES_BASIC,
-            "GeneratedPIN" => TEMPLATES_PIN,
-            "GeneratedMedium" => TEMPLATES_MEDIUM,
-            "GeneratedMaximum" => TEMPLATES_MAXIMUM,
-            _ => {
-                eprintln!(
-                    "Unknown template: {}. Using 'long' as default.",
-                    template_str
-                );
-                TEMPLATES_LONG
-            }
-        }
+    if let Some(template) = args_template {
+        return template.to_template();
     }
+    
+    if let Some(data) = site_data {
+        return password_type_to_template(&data.password_type);
+    }
+    
+    // Default to long if no template specified
+    TEMPLATES_LONG
 }
 
 fn generate_password(
@@ -918,10 +949,35 @@ fn display_identicon(master_pass: &SecStr, user: &str) {
     println!(", Color: {}", identicon.color);
 }
 
+fn generate_completion(shell_type: &str) -> Result<(), Box<dyn std::error::Error>> {
+    // Generate completions directly to stdout
+    let mut cmd = Args::command();
+    let bin_name = cmd.get_name().to_string();
+    
+    match shell_type {
+        "bash" => generate(Bash, &mut cmd, bin_name, &mut io::stdout()),
+        "elvish" => generate(Elvish, &mut cmd, bin_name, &mut io::stdout()),
+        "fish" => generate(Fish, &mut cmd, bin_name, &mut io::stdout()),
+        "powershell" => generate(PowerShell, &mut cmd, bin_name, &mut io::stdout()),
+        "zsh" => generate(Zsh, &mut cmd, bin_name, &mut io::stdout()),
+        _ => return Err("Unsupported shell type".into())
+    }
+    
+    Ok(())
+}
+
 fn main() {
     let args = Args::parse();
     
-    // Debug prints
+    if let Some(shell_type) = &args.generate_completion {
+        if let Err(e) = generate_completion(shell_type) {
+            eprintln!("Error generating completion script: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+    
+    // Debug prints (only shown if not generating completions)
     println!("[DEBUG] Arguments received:");
     println!("[DEBUG] Site: {:?}", args.site);
     println!("[DEBUG] Template: {:?}", args.template);
@@ -930,6 +986,7 @@ fn main() {
     println!("[DEBUG] Regex: {:?}", args.regex);
     println!("[DEBUG] Setup: {}", args.setup);
     println!("[DEBUG] Force keyring fail: {}", args.force_keyring_fail);
+    println!("[DEBUG] Generate completion: {:?}", args.generate_completion);
 
     if args.setup {
         println!("[DEBUG] Entering setup mode");
